@@ -2,6 +2,8 @@
 
 拾页是一个本地网页离线资料库。输入公开网页地址后，它会提取正文、图片、直接音视频与常见附件，生成不执行远端脚本的本地阅读页，并支持整页 ZIP 导出。
 
+Copyright (C) 2026 PhiLia011. Licensed under GPL-3.0-only.
+
 ## 平台
 
 - Windows 10/11 x64：WPF + WebView2，自包含单文件 EXE。
@@ -65,3 +67,9 @@ dotnet restore .\desktop\PageVault\PageVault.csproj
 - Windows 面向公众分发前，购买并配置受信任的 Authenticode 代码签名证书。
 - Android 上架 Google Play 时，补齐商店图标、截图、实际开发者名称、客服邮箱、隐私政策 URL，并按商店要求生成 AAB。
 - 使用自己的应用名称、包名、签名主体和品牌素材；当前名称与包名可用于内部测试或自有渠道发布。
+
+## 许可证
+
+本项目以 **GNU General Public License v3.0 only**（`GPL-3.0-only`）发布。
+完整条款见 [LICENSE](LICENSE)。第三方组件仍分别遵循
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 中列出的许可证。

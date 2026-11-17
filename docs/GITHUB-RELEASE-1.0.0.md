@@ -44,3 +44,8 @@
 - Windows 已测试真实网页抓取、正文过滤、媒体落盘和 ZIP 导出。
 - Android API 35 模拟器已测试安装、抓取、离线阅读、音视频控件和导出到 Downloads。
 - Android 运行日志未发现崩溃或 ANR。
+
+## 许可证
+
+项目源码和本项目原创内容以 **GPL-3.0-only** 发布。AngleSharp、jsoup、
+WebView2 SDK、.NET 与 Android SDK 等第三方组件分别遵循其原始许可证。
