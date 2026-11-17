@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta property="og:title" content="拾页采集能力测试">
+  <title>拾页采集能力测试</title>
+  <style>body { font-family: sans-serif; }</style>
+</head>
+<body>
+  <nav class="topnav">这个导航不应进入阅读页</nav>
+  <main id="main">
+    <article>
+      <h1>拾页采集能力测试</h1>
+      <p>这是一个用于验证正文、图片、视频、音频与附件下载的公开测试页面。</p>
+      <p>阅读页应移除导航、脚本、表单和远端样式，只保留可安全浏览的内容。</p>
+      <figure>
+        <img src="sample.png" alt="测试图片">
+        <figcaption>静态图片测试</figcaption>
+      </figure>
+      <video controls poster="sample.png" width="320">
+        <source src="sample.mp4" type="video/mp4">
+      </video>
+      <audio controls src="sample.wav"></audio>
+      <p><a href="notes.txt">下载测试附件</a></p>
+      <script>document.body.dataset.scriptRan = "yes";</script>
+    </article>
+  </main>
+  <div class="sidebar">推荐内容不应进入阅读页</div>
+</body>
+</html>

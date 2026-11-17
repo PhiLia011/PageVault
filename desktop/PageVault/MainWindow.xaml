@@ -1,0 +1,247 @@
+<Window x:Class="PageVault.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="拾页 · PageVault"
+        Width="1180" Height="780" MinWidth="920" MinHeight="620"
+        WindowStartupLocation="CenterScreen"
+        Icon="Assets/PageVault.ico">
+    <Grid Background="{StaticResource PaperBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#FFFCF6" BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="0,0,0,1" Padding="28,20">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Border Width="44" Height="44" CornerRadius="12"
+                        Background="{StaticResource GreenBrush}" VerticalAlignment="Center">
+                    <Grid>
+                        <Path Data="M12,5 L30,5 L35,10 L35,37 L12,37 Z"
+                              Fill="#FFFCF6" Stretch="None" Margin="4,2,0,0" />
+                        <Path Data="M30,5 L35,10 L30,10 Z" Fill="#D8E7E1"
+                              Stretch="None" Margin="4,2,0,0" />
+                        <Border Width="10" Height="10" Background="{StaticResource AccentBrush}"
+                                CornerRadius="2" HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom" Margin="0,0,7,7" />
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Column="1" Margin="14,0,24,0" VerticalAlignment="Center">
+                    <TextBlock Text="拾页" FontFamily="Microsoft YaHei UI"
+                               FontSize="25" FontWeight="Bold"
+                               Foreground="{StaticResource GreenBrush}" />
+                    <TextBlock Text="把公开网页整理成可离线阅读的本地资料"
+                               FontSize="12" Foreground="{StaticResource MutedBrush}"
+                               Margin="0,2,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Width="560" VerticalAlignment="Center">
+                    <TextBlock Text="网页地址" FontSize="11" FontWeight="Bold"
+                               Foreground="{StaticResource AccentBrush}" Margin="2,0,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="UrlInput" Grid.Column="0"
+                                 Style="{StaticResource UrlTextBox}"
+                                 FontFamily="Microsoft YaHei UI"
+                                 KeyDown="UrlInput_KeyDown"
+                                 ToolTip="支持 http 或 https 网页" />
+                        <Button Grid.Column="1" Content="粘贴" Margin="8,0,0,0"
+                                Style="{StaticResource QuietButton}"
+                                Click="PasteButton_Click" />
+                        <Button x:Name="CrawlButton" Grid.Column="2" Content="抓取页面"
+                                Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"
+                                Click="CrawlButton_Click" />
+                        <Button x:Name="CancelButton" Grid.Column="3" Content="取消"
+                                Margin="8,0,0,0" Style="{StaticResource QuietButton}"
+                                Visibility="Collapsed" Click="CancelButton_Click" />
+                    </Grid>
+                    <Grid x:Name="CrawlProgressPanel" Margin="2,8,0,0" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ProgressBar x:Name="CrawlProgress" VerticalAlignment="Center" />
+                        <TextBlock x:Name="CrawlStatusText" Grid.Column="1" Margin="12,0,0,0"
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" />
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="20,18,20,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="292" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource CardBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                    CornerRadius="14" Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Margin="3,2,3,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="离线资料库" FontSize="17" FontWeight="Bold" />
+                            <TextBlock x:Name="ItemsCountText" Text="0 页"
+                                       FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                       Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="保存目录"
+                                Style="{StaticResource LinkButton}"
+                                Click="OpenLibraryFolder_Click" />
+                    </Grid>
+
+                    <ListBox x:Name="LibraryList" Grid.Row="1"
+                             Background="Transparent" BorderThickness="0"
+                             ItemContainerStyle="{StaticResource LibraryListItem}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="LibraryList_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontSize="13"
+                                               FontWeight="SemiBold" TextWrapping="Wrap"
+                                               MaxHeight="40" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding ListMeta}" FontSize="10.5"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               TextWrapping="Wrap" Margin="0,5,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="1" x:Name="EmptyLibraryText"
+                               Text="还没有保存的页面&#x0a;输入网址开始第一份归档"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextAlignment="Center" FontSize="12"
+                               Foreground="{StaticResource MutedBrush}"
+                               LineHeight="22" IsHitTestVisible="False" />
+
+                    <Border Grid.Row="2" Background="#F5F2EA" CornerRadius="9"
+                            Padding="10,8" Margin="0,8,0,0">
+                        <TextBlock Text="右键条目可删除 · 内容只保存在本机"
+                                   FontSize="10.5" Foreground="{StaticResource MutedBrush}"
+                                   HorizontalAlignment="Center" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Background="{StaticResource CardBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                    CornerRadius="14" ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Background="#FFFEFA" Margin="18,12,14,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                            <TextBlock x:Name="CurrentPageTitle" Text="等待选择"
+                                       FontSize="15" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="CurrentPageUrl" Text="抓取后可在应用内直接阅读"
+                                       FontSize="10.5" Foreground="{StaticResource MutedBrush}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button x:Name="SourceButton" Grid.Column="1" Content="原网页"
+                                Style="{StaticResource QuietButton}" Margin="4,0"
+                                IsEnabled="False" Click="SourceButton_Click" />
+                        <Button x:Name="ExportButton" Grid.Column="2" Content="导出 ZIP"
+                                Style="{StaticResource QuietButton}" Margin="4,0"
+                                IsEnabled="False" Click="ExportButton_Click" />
+                        <Button x:Name="FolderButton" Grid.Column="3" Content="打开目录"
+                                Style="{StaticResource QuietButton}" Margin="4,0"
+                                IsEnabled="False" Click="OpenPageFolder_Click" />
+                        <Button x:Name="DeleteButton" Grid.Column="4" Content="删除"
+                                Style="{StaticResource LinkButton}" Margin="2,0,0,0"
+                                Foreground="#A64D32" IsEnabled="False"
+                                Click="DeleteButton_Click" />
+                    </Grid>
+
+                    <Border Grid.Row="0" Height="1" VerticalAlignment="Bottom"
+                            Background="{StaticResource LineBrush}" />
+
+                    <Grid Grid.Row="1" Background="#FAF8F2">
+                        <wv2:WebView2 x:Name="Reader" Visibility="Collapsed" />
+                        <Grid x:Name="EmptyReader">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Width="420">
+                                <Border Width="80" Height="80" CornerRadius="24"
+                                        Background="#E6EEE7" HorizontalAlignment="Center">
+                                    <Grid>
+                                        <Path Data="M38,20 L56,20 L62,26 L62,60 L38,60 Z"
+                                              Fill="{StaticResource GreenBrush}" Stretch="None" />
+                                        <Path Data="M52,35 L58,35 M52,42 L58,42 M52,49 L58,49"
+                                              Stroke="#F4F1E9" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" Stretch="None" />
+                                    </Grid>
+                                </Border>
+                                <TextBlock Text="网页内容会在这里展开" FontSize="20"
+                                           FontWeight="Bold" HorizontalAlignment="Center"
+                                           Margin="0,20,0,8" />
+                                <TextBlock Text="输入网页地址后，拾页会分析正文，保存图片、音视频和常见附件，并生成可离线浏览的阅读页。"
+                                           FontSize="12.5" Foreground="{StaticResource MutedBrush}"
+                                           TextAlignment="Center" TextWrapping="Wrap"
+                                           LineHeight="22" />
+                                <Border Background="#F2EEE4" CornerRadius="8" Padding="13,9"
+                                        Margin="30,18,30,0">
+                                    <TextBlock Text="支持公开静态页面；登录、验证码、DRM 与 HLS/DASH 流不在此版本范围内。"
+                                               FontSize="10.5" Foreground="#7B7162"
+                                               TextWrapping="Wrap" TextAlignment="Center" />
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="#EFEBE1" BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="0,1,0,0" Padding="22,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="BottomStatusText"
+                           Text="准备就绪 · 所有下载内容仅保存在本机"
+                           FontSize="10.5" Foreground="{StaticResource MutedBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="PageVault 1.0.0"
+                           FontSize="10" Foreground="#978F81"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

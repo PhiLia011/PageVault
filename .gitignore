@@ -1,0 +1,22 @@
+# Secrets and signing material
+.signing/
+
+# Local build output and package artifacts
+build/
+dist/
+**/bin/
+**/obj/
+
+# IDE and OS files
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.tmp
+Thumbs.db
+.DS_Store
+
+# Test/export leftovers
+*.idsig
+export-test.zip
