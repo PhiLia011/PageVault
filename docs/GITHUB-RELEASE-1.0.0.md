@@ -30,6 +30,7 @@
 - `PageVault-1.0.0-win-x64.zip` — Windows 便携包，含使用说明和隐私说明。
 - `PageVault-1.0.0-android.apk` — Android 安装包。
 - `PageVault-1.0.0-store-assets.zip` — 应用图标、Android 实机截图和发布清单。
+- `PageVault-1.0.0-source-gpl.zip` — 与本版本对应的完整源码和 GPL-3.0 许可证。
 - `PageVault-1.0.0-checksums.sha256` — SHA-256 校验值。
 
 ## 功能边界
