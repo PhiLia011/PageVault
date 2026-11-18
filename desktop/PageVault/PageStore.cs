@@ -94,6 +94,84 @@ public sealed class PageStore
             CompressionLevel.Optimal, false);
     }
 
+    public string DownloadKinds(
+        PageItem page,
+        string destinationRoot,
+        IReadOnlySet<string> kinds)
+    {
+        Directory.CreateDirectory(destinationRoot);
+        var safeTitle = SanitizeName(page.Title);
+        var target = Path.Combine(
+            destinationRoot,
+            $"{safeTitle}_{page.Id}");
+        Directory.CreateDirectory(target);
+        var assetsTarget = Path.Combine(target, "assets");
+        Directory.CreateDirectory(assetsTarget);
+
+        foreach (var metadata in new[] { "manifest.json" })
+        {
+            var source = Path.Combine(page.DirectoryPath, metadata);
+            if (File.Exists(source))
+            {
+                File.Copy(source, Path.Combine(target, metadata), true);
+            }
+        }
+        if (kinds.Contains("text"))
+        {
+            foreach (var document in new[] { "index.html", "article.txt" })
+            {
+                var source = Path.Combine(page.DirectoryPath, document);
+                if (File.Exists(source))
+                {
+                    File.Copy(source, Path.Combine(target, document), true);
+                }
+            }
+        }
+
+        var manifestPath = Path.Combine(page.DirectoryPath, "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            throw new InvalidOperationException("预览清单不存在");
+        }
+        using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        if (!manifest.RootElement.TryGetProperty("files", out var files)
+            || files.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("预览中没有可下载的文件清单");
+        }
+        foreach (var file in files.EnumerateArray())
+        {
+            var kind = GetString(file, "kind", "");
+            var relative = GetString(file, "file", "");
+            if (!kinds.Contains(kind) || string.IsNullOrWhiteSpace(relative))
+            {
+                continue;
+            }
+            var source = Path.GetFullPath(Path.Combine(page.DirectoryPath, relative));
+            var root = Path.GetFullPath(page.DirectoryPath) + Path.DirectorySeparatorChar;
+            if (!source.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(source))
+            {
+                continue;
+            }
+            var destination = Path.Combine(target, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination, true);
+        }
+        return target;
+    }
+
+    public string ExportToFolder(PageItem page, string destinationRoot)
+    {
+        Directory.CreateDirectory(destinationRoot);
+        var safeTitle = SanitizeName(page.Title);
+        var destination = Path.Combine(
+            destinationRoot,
+            $"PageVault_{safeTitle}_{DateTime.Now:yyyyMMdd_HHmmss}.zip");
+        Export(page, destination);
+        return destination;
+    }
+
     public static void OpenFolder(string path)
     {
         var target = Directory.Exists(path) ? path : Path.GetDirectoryName(path) ?? path;
@@ -169,4 +247,11 @@ public sealed class PageStore
         && value.TryGetInt32(out var number)
             ? number
             : 0;
+
+    private static string SanitizeName(string value)
+    {
+        var result = System.Text.RegularExpressions.Regex.Replace(
+            value, @"[\\/:*?""<>|\p{Cc}]", "_").Trim();
+        return string.IsNullOrWhiteSpace(result) ? "网页" : result[..Math.Min(48, result.Length)];
+    }
 }

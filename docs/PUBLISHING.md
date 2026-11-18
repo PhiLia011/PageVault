@@ -4,7 +4,7 @@
 
 - [x] `targetSdkVersion 35`，`minSdkVersion 26`。
 - [x] Release APK 经 zipalign，使用 v2/v3 签名。
-- [x] 包名 `com.pagevault.app`，版本号 `1.0.0` / `1`。
+- [x] 包名 `com.pagevault.app`，版本号 `1.1.0` / `2`。
 - [ ] Google Play 通常要求 Android App Bundle（AAB）；若仅通过自有网站发布，可直接分发 APK。
 - [ ] 在 Play Console 填写实际开发者名称、客服邮箱、隐私政策公网 URL。
 - [ ] 上传商店图标和手机截图。

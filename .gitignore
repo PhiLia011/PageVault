@@ -6,6 +6,9 @@ build/
 dist/
 **/bin/
 **/obj/
+desktop/PageVault/third_party/yt-dlp.exe
+android/.gradle/
+android/local.properties
 
 # IDE and OS files
 .vs/

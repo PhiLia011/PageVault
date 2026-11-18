@@ -71,6 +71,7 @@ public sealed class ScraperService
 
     private readonly HttpClient _http;
     private readonly HtmlParser _parser = new();
+    private readonly VideoResolver _videoResolver = new();
 
     static ScraperService()
     {
@@ -135,6 +136,15 @@ public sealed class ScraperService
 
         try
         {
+            var resolvedVideo = await _videoResolver.ResolveAsync(
+                pageUrl.AbsoluteUri, progress, cancellationToken);
+            if (resolvedVideo is not null)
+            {
+                return await SaveResolvedVideoAsync(
+                    resolvedVideo, id, tempDirectory, finalDirectory,
+                    assetsDirectory, progress, cancellationToken);
+            }
+
             Report(progress, 2, "正在读取网页");
             var fetched = await FetchPageAsync(pageUrl, cancellationToken);
             pageUrl = fetched.Url;
@@ -198,6 +208,14 @@ public sealed class ScraperService
                 cancellationToken);
 
             var pageBytes = PageStore.DirectorySize(tempDirectory);
+            var files = assets.Values
+                .Where(asset => asset.LocalName is not null)
+                .Select(asset => new
+                {
+                    kind = asset.Kind,
+                    file = "assets/" + asset.LocalName
+                })
+                .ToList();
             var manifest = new
             {
                 id,
@@ -215,6 +233,7 @@ public sealed class ScraperService
                     audios = audioCount,
                     attachments = attachmentCount
                 },
+                files,
                 licenseNotice = "仅保存用户有权访问和保存的内容。"
             };
             await File.WriteAllTextAsync(
@@ -229,13 +248,167 @@ public sealed class ScraperService
             Directory.Move(tempDirectory, finalDirectory);
             Report(progress, 100, "已保存到本地资料库");
             return new ScrapeResult(id, title, imageCount, videoCount, audioCount,
-                attachmentCount, pageBytes);
+                attachmentCount, pageBytes, finalDirectory);
         }
         catch
         {
             TryDeleteDirectory(tempDirectory);
             throw;
         }
+    }
+
+    private async Task<ScrapeResult> SaveResolvedVideoAsync(
+        ResolvedVideo resolved,
+        string id,
+        string tempDirectory,
+        string finalDirectory,
+        string assetsDirectory,
+        IProgress<ScrapeProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var slots = resolved.Media
+            .Take(MaxAssets + 1)
+            .Select(media => new AssetSlot(media.Url, media.Kind)
+            {
+                Headers = media.Headers
+            })
+            .ToList();
+        long totalBytes = 0;
+        for (var index = 0; index < slots.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var percent = 12 + (int)Math.Round(index * 72d / Math.Max(1, slots.Count));
+            Report(progress, percent, $"正在保存视频资源 {index + 1}/{slots.Count}");
+            if (totalBytes >= MaxTotalBytes)
+            {
+                break;
+            }
+            var downloaded = await DownloadAssetAsync(
+                slots[index], assetsDirectory, new Uri(resolved.SourceUrl),
+                MaxTotalBytes - totalBytes, cancellationToken);
+            totalBytes += downloaded;
+        }
+
+        var videoSlots = slots.Where(slot => slot.Kind == "video"
+                                             && slot.LocalName is not null).ToList();
+        var imageSlots = slots.Where(slot => slot.Kind == "image"
+                                             && slot.LocalName is not null).ToList();
+        if (videoSlots.Count == 0 && imageSlots.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "已解析到媒体地址，但文件下载失败；链接可能已过期或受到平台风控");
+        }
+        if (resolved.Media.Any(media => media.Kind == "video") && videoSlots.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "视频解析成功，但视频文件下载失败；请检查网络或平台限制");
+        }
+
+        var poster = imageSlots.FirstOrDefault();
+        var content = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(resolved.Author))
+        {
+            content.Append("<p><strong>作者：</strong>")
+                .Append(WebUtility.HtmlEncode(resolved.Author))
+                .Append("</p>");
+        }
+        content.Append("<p><strong>来源：</strong>")
+            .Append(WebUtility.HtmlEncode(resolved.Platform))
+            .Append("</p>");
+        if (!string.IsNullOrWhiteSpace(resolved.Description))
+        {
+            foreach (var paragraph in resolved.Description
+                         .Replace("\r\n", "\n", StringComparison.Ordinal)
+                         .Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                content.Append("<p>")
+                    .Append(WebUtility.HtmlEncode(paragraph.Trim()))
+                    .Append("</p>");
+            }
+        }
+        foreach (var videoSlot in videoSlots)
+        {
+            content.Append("<video controls preload=\"metadata\" src=\"assets/")
+                .Append(WebUtility.HtmlEncode(videoSlot.LocalName)).Append('"');
+            if (poster?.LocalName is { } posterName)
+            {
+                content.Append(" poster=\"assets/")
+                    .Append(WebUtility.HtmlEncode(posterName)).Append('"');
+            }
+            content.Append("></video>");
+        }
+        foreach (var imageSlot in imageSlots)
+        {
+            content.Append("<figure><img src=\"assets/")
+                .Append(WebUtility.HtmlEncode(imageSlot.LocalName!))
+                .Append("\" alt=\"视频封面\"></figure>");
+        }
+
+        Report(progress, 88, "正在生成视频离线阅读页");
+        var contentHtml = content.ToString();
+        var readerDocument = await _parser.ParseDocumentAsync(
+            $"<html><body>{contentHtml}</body></html>", cancellationToken);
+        var plainText = NormalizeWhitespace(
+            $"{resolved.Title}\n作者：{resolved.Author}\n{resolved.Description}");
+        var imageCount = imageSlots.Count;
+        var videoCount = videoSlots.Count;
+        var readerHtml = BuildReaderHtml(
+            resolved.Title, new Uri(resolved.SourceUrl), contentHtml,
+            imageCount, videoCount, 0, 0);
+        await File.WriteAllTextAsync(
+            Path.Combine(tempDirectory, "index.html"), readerHtml,
+            new UTF8Encoding(false), cancellationToken);
+        var articleText = resolved.Title + "\n\n"
+                          + (readerDocument.Body?.TextContent ?? plainText);
+        await File.WriteAllTextAsync(
+            Path.Combine(tempDirectory, "article.txt"),
+            articleText,
+            new UTF8Encoding(false), cancellationToken);
+
+        var pageBytes = PageStore.DirectorySize(tempDirectory);
+        var files = slots
+            .Where(slot => slot.LocalName is not null)
+            .Select(slot => new
+            {
+                kind = slot.Kind,
+                file = "assets/" + slot.LocalName
+            })
+            .ToList();
+        var manifest = new
+        {
+            id,
+            title = resolved.Title,
+            url = resolved.SourceUrl,
+            platform = resolved.Platform,
+            author = resolved.Author,
+            capturedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            reader = "index.html",
+            article = "article.txt",
+            bytes = pageBytes,
+            summary = Abbreviate(NormalizeWhitespace(
+                $"{resolved.Title} {resolved.Description}"), 220),
+            assets = new
+            {
+                images = imageCount,
+                videos = videoCount,
+                audios = 0,
+                attachments = 0
+            },
+            files,
+            licenseNotice = "仅保存用户有权访问和保存的内容。"
+        };
+        await File.WriteAllTextAsync(
+            Path.Combine(tempDirectory, "manifest.json"),
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            }),
+            new UTF8Encoding(false), cancellationToken);
+        Directory.Move(tempDirectory, finalDirectory);
+        Report(progress, 100, "视频已解析并保存到本地");
+        return new ScrapeResult(
+            id, resolved.Title, imageCount, videoCount, 0, 0, pageBytes,
+            finalDirectory);
     }
 
     private async Task<FetchedPage> FetchPageAsync(Uri url, CancellationToken cancellationToken)
@@ -414,8 +587,25 @@ public sealed class ScraperService
             return await SaveDataUrlAsync(slot, assetsDirectory, cancellationToken);
         }
         using var request = new HttpRequestMessage(HttpMethod.Get, slot.Url);
-        request.Headers.Referrer = referer;
         request.Headers.Accept.ParseAdd("*/*");
+        foreach (var (name, value) in slot.Headers)
+        {
+            if (string.Equals(name, "Referer", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Uri.TryCreate(value, UriKind.Absolute, out var headerReferer))
+                {
+                    request.Headers.Referrer = headerReferer;
+                }
+            }
+            else
+            {
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+        }
+        if (request.Headers.Referrer is null)
+        {
+            request.Headers.Referrer = referer;
+        }
         using var response = await _http.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -940,6 +1130,8 @@ public sealed class ScraperService
     {
         public string Url { get; } = url;
         public string Kind { get; } = kind;
+        public IReadOnlyDictionary<string, string> Headers { get; init; } =
+            new Dictionary<string, string>();
         public string? LocalName { get; set; }
         public string? Mime { get; set; }
         public long Bytes { get; set; }

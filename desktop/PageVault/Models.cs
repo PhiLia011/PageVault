@@ -53,4 +53,5 @@ public sealed record ScrapeResult(
     int Videos,
     int Audios,
     int Attachments,
-    long Bytes);
+    long Bytes,
+    string DirectoryPath);

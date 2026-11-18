@@ -5,7 +5,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -17,11 +16,15 @@ public partial class MainWindow : Window
     private readonly PageStore _store = new();
     private readonly ScraperService _scraper = new();
     private readonly ObservableCollection<PageItem> _pages = [];
+    private readonly AppSettings _settings = AppSettings.Load();
+    private readonly string _previewRoot = Path.Combine(
+        Path.GetTempPath(), "PageVault", "preview");
     private CancellationTokenSource? _crawlCancellation;
     private bool _webViewReady;
     private bool _busy;
+    private bool _suppressLibrarySelection;
+    private bool _isLibraryPage;
     private PageItem? _selectedPage;
-    private string? _pendingPageId;
 
     public MainWindow()
     {
@@ -31,6 +34,9 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         LibraryList.ContextMenu = BuildLibraryContextMenu();
+        SavePathText.Text = _settings.DownloadDirectory;
+        TryDeleteDirectory(_previewRoot);
+        Directory.CreateDirectory(_previewRoot);
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -92,20 +98,47 @@ public partial class MainWindow : Window
 
     private async void LibraryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressLibrarySelection)
+        {
+            return;
+        }
         if (LibraryList.SelectedItem is not PageItem page)
         {
             ClearSelection();
             return;
         }
+        if (_selectedPage is not null && !_isLibraryPage
+                                         && !string.Equals(
+                                             _selectedPage.DirectoryPath,
+                                             page.DirectoryPath,
+                                             StringComparison.OrdinalIgnoreCase))
+        {
+            TryDeleteDirectory(_selectedPage.DirectoryPath);
+        }
+        SetCurrentPage(page, isLibraryPage: true);
+        await ShowPageAsync(page);
+    }
+
+    private void SetCurrentPage(PageItem page, bool isLibraryPage)
+    {
         _selectedPage = page;
+        _isLibraryPage = isLibraryPage;
         CurrentPageTitle.Text = page.Title;
         CurrentPageUrl.Text = page.Url;
         CurrentPageUrl.ToolTip = page.Url;
         SourceButton.IsEnabled = true;
         ExportButton.IsEnabled = true;
-        FolderButton.IsEnabled = true;
-        DeleteButton.IsEnabled = true;
-        await ShowPageAsync(page);
+        FolderButton.IsEnabled = isLibraryPage;
+        DeleteButton.IsEnabled = isLibraryPage;
+        TextDownloadButton.IsEnabled = true;
+        ImageDownloadButton.IsEnabled = page.Images > 0;
+        VideoDownloadButton.IsEnabled = page.Videos > 0;
+        AudioDownloadButton.IsEnabled = page.Audios > 0;
+        AttachmentDownloadButton.IsEnabled = page.Attachments > 0;
+        ImageDownloadButton.Content = $"图片 ({page.Images})";
+        VideoDownloadButton.Content = $"视频 ({page.Videos})";
+        AudioDownloadButton.Content = $"音频 ({page.Audios})";
+        AttachmentDownloadButton.Content = $"附件 ({page.Attachments})";
     }
 
     private async Task ShowPageAsync(PageItem page)
@@ -126,7 +159,7 @@ public partial class MainWindow : Window
         EmptyReader.Visibility = Visibility.Collapsed;
         Reader.CoreWebView2.Navigate(new Uri(page.ReaderPath).AbsoluteUri);
         BottomStatusText.Text =
-            $"{page.AssetText} · {page.SizeText} · 保存于 {page.CapturedText}";
+            $"{page.AssetText} · {page.SizeText} · 生成于 {page.CapturedText}";
     }
 
     private void ClearSelection()
@@ -139,6 +172,15 @@ public partial class MainWindow : Window
         ExportButton.IsEnabled = false;
         FolderButton.IsEnabled = false;
         DeleteButton.IsEnabled = false;
+        TextDownloadButton.IsEnabled = false;
+        ImageDownloadButton.IsEnabled = false;
+        VideoDownloadButton.IsEnabled = false;
+        AudioDownloadButton.IsEnabled = false;
+        AttachmentDownloadButton.IsEnabled = false;
+        ImageDownloadButton.Content = "图片 (0)";
+        VideoDownloadButton.Content = "视频 (0)";
+        AudioDownloadButton.Content = "音频 (0)";
+        AttachmentDownloadButton.Content = "附件 (0)";
         EmptyReader.Visibility = Visibility.Visible;
         Reader.Visibility = Visibility.Collapsed;
         if (_webViewReady)
@@ -180,12 +222,33 @@ public partial class MainWindow : Window
         try
         {
             var result = await _scraper.ScrapeAsync(
-                url, _store.Root, progress, _crawlCancellation.Token);
-            _pendingPageId = result.Id;
-            RefreshLibrary(result.Id);
-            ShowStatus($"已保存「{result.Title}」 · {result.Images} 图 · "
-                       + $"{result.Videos} 视频 · {PageStore.FormatBytes(result.Bytes)}");
-            CrawlStatusText.Text = "已保存";
+                url, _previewRoot, progress, _crawlCancellation.Token);
+            if (_selectedPage?.DirectoryPath.StartsWith(
+                    _previewRoot, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                TryDeleteDirectory(_selectedPage.DirectoryPath);
+            }
+            var preview = new PageItem
+            {
+                Id = result.Id,
+                Title = result.Title,
+                Url = url,
+                DirectoryPath = result.DirectoryPath,
+                CapturedAt = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                Bytes = result.Bytes,
+                Images = result.Images,
+                Videos = result.Videos,
+                Audios = result.Audios,
+                Attachments = result.Attachments,
+                Summary = ""
+            };
+            _suppressLibrarySelection = true;
+            LibraryList.SelectedItem = null;
+            _suppressLibrarySelection = false;
+            SetCurrentPage(preview, isLibraryPage: false);
+            await ShowPageAsync(preview);
+            ShowStatus($"预览已生成「{result.Title}」 · 尚未保存到本地");
+            CrawlStatusText.Text = "预览已生成";
         }
         catch (OperationCanceledException)
         {
@@ -204,7 +267,6 @@ public partial class MainWindow : Window
         {
             _crawlCancellation?.Dispose();
             _crawlCancellation = null;
-            _pendingPageId = null;
             _busy = false;
             SetBusyState(false);
         }
@@ -268,41 +330,59 @@ public partial class MainWindow : Window
         {
             return;
         }
-        var safeName = Regex.Replace(_selectedPage.Title, @"[\\/:*?""<>|\p{Cc}]", "_")
-            .Trim();
-        if (safeName.Length > 42)
+        try
         {
-            safeName = safeName[..42];
+            var path = _store.ExportToFolder(_selectedPage, _settings.DownloadDirectory);
+            ShowStatus("完整 ZIP 已保存：" + path);
+            MessageBox.Show("完整离线包已保存。\n\n" + path,
+                "下载完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        if (string.IsNullOrWhiteSpace(safeName))
+        catch (Exception error)
         {
-            safeName = "网页";
+            MessageBox.Show(error.Message, "下载失败",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        var dialog = new SaveFileDialog
-        {
-            Title = "导出完整离线包",
-            Filter = "ZIP 压缩包 (*.zip)|*.zip",
-            DefaultExt = ".zip",
-            FileName = $"PageVault_{safeName}_{DateTime.Now:yyyyMMdd_HHmmss}.zip",
-            InitialDirectory = Environment.GetFolderPath(
-                Environment.SpecialFolder.MyDocuments)
-        };
-        if (dialog.ShowDialog(this) != true)
+    }
+
+    private void DownloadKind_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPage is null || sender is not Button { Tag: string kind })
         {
             return;
         }
         try
         {
-            _store.Export(_selectedPage, dialog.FileName);
-            ShowStatus("已导出：" + dialog.FileName);
-            MessageBox.Show("完整离线包已导出。\n\n" + dialog.FileName,
-                "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            var path = _store.DownloadKinds(
+                _selectedPage, _settings.DownloadDirectory,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { kind });
+            ShowStatus("已下载到：" + path);
+            MessageBox.Show("所选内容已下载。\n\n" + path,
+                "下载完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception error)
         {
-            MessageBox.Show(error.Message, "导出失败",
+            MessageBox.Show(error.Message, "下载失败",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void SavePathButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "选择下载保存位置",
+            InitialDirectory = Directory.Exists(_settings.DownloadDirectory)
+                ? _settings.DownloadDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+        _settings.DownloadDirectory = dialog.FolderName;
+        _settings.Save();
+        SavePathText.Text = _settings.DownloadDirectory;
+        ShowStatus("新的下载位置：" + _settings.DownloadDirectory);
     }
 
     private void OpenPageFolder_Click(object sender, RoutedEventArgs e)
@@ -354,7 +434,7 @@ public partial class MainWindow : Window
 
     private void DeleteSelectedPage()
     {
-        if (_selectedPage is null)
+        if (_selectedPage is null || !_isLibraryPage)
         {
             return;
         }
@@ -453,5 +533,21 @@ public partial class MainWindow : Window
     {
         _crawlCancellation?.Cancel();
         Reader.Dispose();
+        TryDeleteDirectory(_previewRoot);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, true);
+            }
+        }
+        catch
+        {
+            // Preview cleanup is retried on the next launch.
+        }
     }
 }

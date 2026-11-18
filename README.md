@@ -1,6 +1,6 @@
 # 拾页 / PageVault
 
-拾页是一个本地网页离线资料库。输入公开网页地址后，它会提取正文、图片、直接音视频与常见附件，生成不执行远端脚本的本地阅读页，并支持整页 ZIP 导出。
+拾页是一个网页与视频解析浏览工具。输入公开网页或视频分享链接后，它会提取正文、图片、音视频和附件，先生成不执行远端脚本的临时预览；只有用户主动点击对应下载按钮时，内容才写入指定目录。
 
 Copyright (C) 2026 PhiLia011. Licensed under GPL-3.0-only.
 
@@ -15,17 +15,20 @@ Copyright (C) 2026 PhiLia011. Licensed under GPL-3.0-only.
 - 自动补全 `https://`，支持 http/https。
 - 提取文章正文、标题、段落、列表、表格、代码、引用。
 - 保存 `<img>`、懒加载图片属性、直接 `<video>`、`<audio>`、`<source>` 与海报图。
+- 解析 B 站、抖音、快手、小红书分享链接。
+- Windows 与 Android 内置 yt-dlp，用于 YouTube、TikTok、X、Instagram、Vimeo 等站点。
 - 保存页面链接中的常见静态附件。
 - 移除脚本、表单、iframe、对象嵌入、导航、侧栏、评论和推荐区域。
-- 应用内离线阅读，图片和音视频可播放。
-- 单页完整 ZIP 导出。
+- 解析后先生成临时预览，不自动加入资料库。
+- 按网页/文字、图片、视频、音频、附件分别下载，也可下载完整 ZIP。
+- Windows 支持自定义下载目录；Android 使用系统目录选择器。
 - Windows 支持取消抓取；Android 支持长按删除和导出到 Downloads。
 
 ## 明确边界
 
 - 不绕过登录、验证码、付费墙、DRM 或访问控制。
 - 不执行远端 JavaScript，因此只由脚本生成的内容可能为空。
-- 直接媒体文件可保存；HLS `.m3u8` 与 DASH `.mpd` 清单不在此版本范围内。
+- 仅保存能直接播放或下载的媒体文件；需要合并分离音视频、DRM 或 HLS/DASH 分片的内容不在此版本范围内。
 - 没有爬取全站、批量抓取或多层链接跟随功能。该工具面向用户主动选择并有权保存的页面。
 - 网站结构千差万别，正文自动识别不能保证对所有站点完美；导出包中同时保留 `article.txt` 便于校对。
 
@@ -38,7 +41,7 @@ dotnet restore .\desktop\PageVault\PageVault.csproj
 .\desktop\build.ps1
 ```
 
-输出：`dist/PageVault-1.0.0-win-x64.exe` 和同名 ZIP。
+输出：`dist/PageVault-1.1.0-win-x64.exe` 和同名 ZIP。
 
 ### Android
 
@@ -47,7 +50,8 @@ dotnet restore .\desktop\PageVault\PageVault.csproj
 ```
 
 脚本优先读取 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 与 `JAVA_HOME`，也接受
-`-AndroidSdk` 和 `-JavaHome` 参数。输出：`dist/PageVault-1.0.0-android.apk`。
+`-AndroidSdk`、`-JavaHome` 和 `-Gradle` 参数。输出：
+`dist/PageVault-1.1.0-android.apk`。
 
 首次构建会生成 `.signing/pagevault-release.jks` 和对应属性文件。发布后必须长期安全保存该密钥；后续更新必须使用同一签名证书。不要把 `.signing` 上传到公开仓库。
 
@@ -57,10 +61,10 @@ dotnet restore .\desktop\PageVault\PageVault.csproj
 
 已验证：
 
-- Windows 真实网页抓取、正文过滤和离线阅读。
-- 图片、视频、音频、附件落盘与阅读页显示。
-- ZIP 完整导出。
-- Android release APK 构建、zipalign 和 v2/v3 签名校验。
+- Windows 真实网页抓取、正文过滤和临时预览。
+- B 站、抖音、快手视频解析与本地播放。
+- 按类型下载视频、网页/文字与完整 ZIP。
+- Android APK 安装、视频解析、目录选择、按类型下载和 ZIP 下载。
 
 ## 发布前仍需提供或确认
 

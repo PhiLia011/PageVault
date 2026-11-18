@@ -19,6 +19,8 @@ public final class PageStore {
         public final long bytes;
         public final int images;
         public final int videos;
+        public final int audios;
+        public final int attachments;
 
         PageItem(File directory, JSONObject manifest) {
             this.directory = directory;
@@ -29,6 +31,8 @@ public final class PageStore {
             JSONObject assets = manifest.optJSONObject("assets");
             this.images = assets == null ? 0 : assets.optInt("images", 0);
             this.videos = assets == null ? 0 : assets.optInt("videos", 0);
+            this.audios = assets == null ? 0 : assets.optInt("audios", 0);
+            this.attachments = assets == null ? 0 : assets.optInt("attachments", 0);
         }
     }
 
@@ -79,5 +83,19 @@ public final class PageStore {
         Collections.sort(pages, Comparator.comparingLong((PageItem item) -> item.capturedAt)
                 .reversed());
         return pages;
+    }
+
+    public static PageItem loadSingle(File directory) {
+        try {
+            File manifest = new File(directory, "manifest.json");
+            if (!manifest.isFile()) {
+                return null;
+            }
+            String json = new String(Files.readAllBytes(manifest.toPath()),
+                    StandardCharsets.UTF_8);
+            return new PageItem(directory, new JSONObject(json));
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 }

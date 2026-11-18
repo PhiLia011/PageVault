@@ -62,7 +62,7 @@
                         <Button Grid.Column="1" Content="粘贴" Margin="8,0,0,0"
                                 Style="{StaticResource QuietButton}"
                                 Click="PasteButton_Click" />
-                        <Button x:Name="CrawlButton" Grid.Column="2" Content="抓取页面"
+                        <Button x:Name="CrawlButton" Grid.Column="2" Content="解析 / 抓取"
                                 Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"
                                 Click="CrawlButton_Click" />
                         <Button x:Name="CancelButton" Grid.Column="3" Content="取消"
@@ -158,7 +158,8 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Grid Grid.Row="0" Background="#FFFEFA" Margin="18,12,14,12">
+                    <StackPanel Grid.Row="0" Background="#FFFEFA">
+                    <Grid Margin="18,12,14,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -177,7 +178,7 @@
                         <Button x:Name="SourceButton" Grid.Column="1" Content="原网页"
                                 Style="{StaticResource QuietButton}" Margin="4,0"
                                 IsEnabled="False" Click="SourceButton_Click" />
-                        <Button x:Name="ExportButton" Grid.Column="2" Content="导出 ZIP"
+                        <Button x:Name="ExportButton" Grid.Column="2" Content="下载全部 ZIP"
                                 Style="{StaticResource QuietButton}" Margin="4,0"
                                 IsEnabled="False" Click="ExportButton_Click" />
                         <Button x:Name="FolderButton" Grid.Column="3" Content="打开目录"
@@ -188,6 +189,39 @@
                                 Foreground="#A64D32" IsEnabled="False"
                                 Click="DeleteButton_Click" />
                     </Grid>
+                    <WrapPanel x:Name="DownloadActionsPanel" Margin="18,0,14,10">
+                        <TextBlock Text="下载当前预览："
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <Button x:Name="TextDownloadButton" Content="网页 / 文字"
+                                Style="{StaticResource QuietButton}" Tag="text"
+                                IsEnabled="False" Margin="0,0,6,6"
+                                Click="DownloadKind_Click" />
+                        <Button x:Name="ImageDownloadButton" Content="图片 (0)"
+                                Style="{StaticResource QuietButton}" Tag="image"
+                                IsEnabled="False" Margin="0,0,6,6"
+                                Click="DownloadKind_Click" />
+                        <Button x:Name="VideoDownloadButton" Content="视频 (0)"
+                                Style="{StaticResource QuietButton}" Tag="video"
+                                IsEnabled="False" Margin="0,0,6,6"
+                                Click="DownloadKind_Click" />
+                        <Button x:Name="AudioDownloadButton" Content="音频 (0)"
+                                Style="{StaticResource QuietButton}" Tag="audio"
+                                IsEnabled="False" Margin="0,0,6,6"
+                                Click="DownloadKind_Click" />
+                        <Button x:Name="AttachmentDownloadButton" Content="附件 (0)"
+                                Style="{StaticResource QuietButton}" Tag="attachment"
+                                IsEnabled="False" Margin="0,0,6,6"
+                                Click="DownloadKind_Click" />
+                        <Button x:Name="SavePathButton" Content="更改保存位置"
+                                Style="{StaticResource LinkButton}" Margin="4,0,0,6"
+                                Click="SavePathButton_Click" />
+                        <TextBlock x:Name="SavePathText" FontSize="10.5"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" MaxWidth="310" />
+                    </WrapPanel>
+                    </StackPanel>
 
                     <Border Grid.Row="0" Height="1" VerticalAlignment="Bottom"
                             Background="{StaticResource LineBrush}" />
@@ -210,7 +244,7 @@
                                 <TextBlock Text="网页内容会在这里展开" FontSize="20"
                                            FontWeight="Bold" HorizontalAlignment="Center"
                                            Margin="0,20,0,8" />
-                                <TextBlock Text="输入网页地址后，拾页会分析正文，保存图片、音视频和常见附件，并生成可离线浏览的阅读页。"
+                                <TextBlock Text="输入网页地址后，拾页会生成临时预览。只有点击对应下载按钮时，内容才会写入你选择的保存位置。"
                                            FontSize="12.5" Foreground="{StaticResource MutedBrush}"
                                            TextAlignment="Center" TextWrapping="Wrap"
                                            LineHeight="22" />
@@ -238,7 +272,7 @@
                            Text="准备就绪 · 所有下载内容仅保存在本机"
                            FontSize="10.5" Foreground="{StaticResource MutedBrush}"
                            VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="PageVault 1.0.0"
+                <TextBlock Grid.Column="1" Text="PageVault 1.1.0"
                            FontSize="10" Foreground="#978F81"
                            VerticalAlignment="Center" />
             </Grid>

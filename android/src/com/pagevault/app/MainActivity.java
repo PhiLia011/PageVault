@@ -1,10 +1,8 @@
 package com.pagevault.app;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -47,7 +45,6 @@ public final class MainActivity extends Activity {
     private static final int COLOR_GREEN = Color.rgb(30, 91, 79);
     private static final int COLOR_ACCENT = Color.rgb(232, 116, 59);
     private static final int COLOR_LINE = Color.rgb(222, 219, 210);
-    private static final int REQUEST_LEGACY_STORAGE = 71;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -59,10 +56,17 @@ public final class MainActivity extends Activity {
     private TextView statusText;
     private ProgressBar progressBar;
     private TextView savedCount;
+    private TextView saveLocationText;
     private PageAdapter adapter;
     private PageStore.PageItem currentPage;
-    private PageStore.PageItem pendingExport;
+    private Button textDownloadButton;
+    private Button imageDownloadButton;
+    private Button videoDownloadButton;
+    private Button audioDownloadButton;
+    private Button attachmentDownloadButton;
+    private Runnable pendingDownloadAction;
     private File pagesRoot;
+    private File previewRoot;
     private boolean working;
 
     @Override
@@ -71,6 +75,13 @@ public final class MainActivity extends Activity {
         configureWindow();
         pagesRoot = PageStore.pagesRoot(getFilesDir());
         PageStore.removeIncomplete(pagesRoot);
+        previewRoot = new File(getCacheDir(), "previews");
+        if (savedInstanceState == null) {
+            Scraper.deleteRecursively(previewRoot);
+        }
+        if (!previewRoot.exists() && !previewRoot.mkdirs()) {
+            Toast.makeText(this, "无法创建预览缓存", Toast.LENGTH_LONG).show();
+        }
         setContentView(buildUi());
         refreshPages();
     }
@@ -97,7 +108,8 @@ public final class MainActivity extends Activity {
         brand.setLetterSpacing(-0.02f);
         root.addView(brand, matchWrap());
 
-        TextView subtitle = text("把网页变成你的离线资料库", 14, COLOR_MUTED, Typeface.SANS_SERIF);
+        TextView subtitle = text("解析网页与视频，想保存时再下载", 14, COLOR_MUTED,
+                Typeface.SANS_SERIF);
         subtitle.setPadding(0, dp(1), 0, dp(22));
         root.addView(subtitle, matchWrap());
 
@@ -124,7 +136,7 @@ public final class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(0, dp(54), 1);
         inputRow.addView(urlInput, inputParams);
 
-        crawlButton = actionButton("抓取页面", COLOR_GREEN, Color.WHITE);
+        crawlButton = actionButton("解析 / 抓取", COLOR_GREEN, Color.WHITE);
         LinearLayout.LayoutParams buttonParams =
                 new LinearLayout.LayoutParams(dp(112), dp(54));
         buttonParams.setMargins(dp(10), 0, 0, 0);
@@ -156,7 +168,7 @@ public final class MainActivity extends Activity {
         resultActions.setOrientation(LinearLayout.HORIZONTAL);
         resultActions.setPadding(0, dp(12), 0, 0);
         Button openButton = secondaryButton("打开阅读");
-        Button exportButton = secondaryButton("导出 ZIP");
+        Button exportButton = secondaryButton("下载全部 ZIP");
         LinearLayout.LayoutParams half =
                 new LinearLayout.LayoutParams(0, dp(44), 1);
         resultActions.addView(openButton, half);
@@ -167,6 +179,41 @@ public final class MainActivity extends Activity {
         openButton.setOnClickListener(view -> openCurrentPage());
         exportButton.setOnClickListener(view -> exportPage(currentPage));
         statusCard.addView(resultActions, matchWrap());
+
+        LinearLayout kindActionsOne = new LinearLayout(this);
+        kindActionsOne.setOrientation(LinearLayout.HORIZONTAL);
+        kindActionsOne.setPadding(0, dp(8), 0, 0);
+        textDownloadButton = secondaryButton("网页 / 文字");
+        imageDownloadButton = secondaryButton("图片 (0)");
+        videoDownloadButton = secondaryButton("视频 (0)");
+        addWeightedButton(kindActionsOne, textDownloadButton, 0);
+        addWeightedButton(kindActionsOne, imageDownloadButton, 8);
+        addWeightedButton(kindActionsOne, videoDownloadButton, 8);
+        textDownloadButton.setOnClickListener(view -> downloadKind(currentPage, "text"));
+        imageDownloadButton.setOnClickListener(view -> downloadKind(currentPage, "image"));
+        videoDownloadButton.setOnClickListener(view -> downloadKind(currentPage, "video"));
+        statusCard.addView(kindActionsOne, matchWrap());
+
+        LinearLayout kindActionsTwo = new LinearLayout(this);
+        kindActionsTwo.setOrientation(LinearLayout.HORIZONTAL);
+        kindActionsTwo.setPadding(0, dp(8), 0, 0);
+        audioDownloadButton = secondaryButton("音频 (0)");
+        attachmentDownloadButton = secondaryButton("附件 (0)");
+        Button locationButton = secondaryButton("保存位置");
+        addWeightedButton(kindActionsTwo, audioDownloadButton, 0);
+        addWeightedButton(kindActionsTwo, attachmentDownloadButton, 8);
+        addWeightedButton(kindActionsTwo, locationButton, 8);
+        audioDownloadButton.setOnClickListener(view -> downloadKind(currentPage, "audio"));
+        attachmentDownloadButton.setOnClickListener(view ->
+                downloadKind(currentPage, "attachment"));
+        locationButton.setOnClickListener(view -> chooseSaveLocation());
+        statusCard.addView(kindActionsTwo, matchWrap());
+
+        saveLocationText = text("保存位置：" + DownloadLocation.displayName(this),
+                11, COLOR_MUTED, Typeface.SANS_SERIF);
+        saveLocationText.setPadding(0, dp(8), 0, 0);
+        statusCard.addView(saveLocationText, matchWrap());
+        setDownloadButtons(null);
         root.addView(statusCard, statusParams);
         statusCard.setVisibility(View.GONE);
 
@@ -174,7 +221,7 @@ public final class MainActivity extends Activity {
         savedHeading.setOrientation(LinearLayout.HORIZONTAL);
         savedHeading.setGravity(Gravity.CENTER_VERTICAL);
         savedHeading.setPadding(0, dp(24), 0, dp(9));
-        TextView savedTitle = text("已保存", 20, COLOR_INK, Typeface.SANS_SERIF);
+        TextView savedTitle = text("历史归档", 20, COLOR_INK, Typeface.SANS_SERIF);
         savedTitle.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
         savedHeading.addView(savedTitle, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -200,7 +247,7 @@ public final class MainActivity extends Activity {
         });
         listHolder.addView(listView, matchMatch());
 
-        TextView empty = text("还没有保存的网页\n输入网址，第一份离线资料会在几秒内出现。",
+        TextView empty = text("没有历史归档\n解析结果只做临时预览，手动下载不会自动加入这里。",
                 15, COLOR_MUTED, Typeface.SANS_SERIF);
         empty.setGravity(Gravity.CENTER);
         empty.setLineSpacing(dp(4), 1f);
@@ -221,15 +268,22 @@ public final class MainActivity extends Activity {
             urlInput.setError(error.getMessage());
             return;
         }
+        if (currentPage != null
+                && currentPage.directory.getAbsolutePath().startsWith(
+                previewRoot.getAbsolutePath())) {
+            Scraper.deleteRecursively(currentPage.directory);
+            currentPage = null;
+        }
         working = true;
         crawlButton.setEnabled(false);
         crawlButton.setAlpha(.55f);
         statusCard.setVisibility(View.VISIBLE);
         progressBar.setProgress(0);
         statusText.setText("准备抓取…");
+        setDownloadButtons(null);
         executor.execute(() -> {
             try {
-                Scraper.PageResult result = Scraper.scrape(url, pagesRoot,
+                Scraper.PageResult result = Scraper.scrape(MainActivity.this, url, previewRoot,
                         (percent, message) -> mainHandler.post(() -> {
                             progressBar.setProgress(percent);
                             statusText.setText(message);
@@ -238,15 +292,15 @@ public final class MainActivity extends Activity {
                     working = false;
                     crawlButton.setEnabled(true);
                     crawlButton.setAlpha(1f);
-                    refreshPages();
-                    currentPage = pages.stream()
-                            .filter(page -> page.directory.getName().equals(result.id))
-                            .findFirst().orElse(null);
-                    statusText.setText("已保存「" + result.title + "」\n"
+                    currentPage = PageStore.loadSingle(new File(previewRoot, result.id));
+                    setDownloadButtons(currentPage);
+                    statusText.setText("预览已生成「" + result.title + "」\n"
                             + formatMeta(result.images + " 张图片",
-                            result.videos + " 个视频", formatBytes(result.bytes)));
+                            result.videos + " 个视频", formatBytes(result.bytes),
+                            "尚未保存"));
                     progressBar.setProgress(100);
-                    Toast.makeText(this, "网页已离线保存", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "预览已生成，尚未保存",
+                            Toast.LENGTH_SHORT).show();
                 });
             } catch (Exception error) {
                 mainHandler.post(() -> {
@@ -255,7 +309,7 @@ public final class MainActivity extends Activity {
                     crawlButton.setAlpha(1f);
                     statusCard.setVisibility(View.VISIBLE);
                     progressBar.setProgress(0);
-                    statusText.setText("保存失败\n" + friendlyError(error));
+                    statusText.setText("解析失败\n" + friendlyError(error));
                 });
             }
         });
@@ -301,41 +355,92 @@ public final class MainActivity extends Activity {
         if (page == null) {
             return;
         }
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
-                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) {
-            pendingExport = page;
-            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
-                    REQUEST_LEGACY_STORAGE);
+        withSaveLocation(() -> performZipDownload(page));
+    }
+
+    private void downloadKind(PageStore.PageItem page, String kind) {
+        if (page == null) {
             return;
         }
-        Toast.makeText(this, "正在打包到 Downloads/PageVault…", Toast.LENGTH_SHORT).show();
+        withSaveLocation(() -> performKindDownload(page, kind));
+    }
+
+    private void withSaveLocation(Runnable action) {
+        if (DownloadLocation.get(this) == null) {
+            pendingDownloadAction = action;
+            Toast.makeText(this, "请选择保存位置", Toast.LENGTH_SHORT).show();
+            DownloadLocation.pick(this);
+            return;
+        }
+        action.run();
+    }
+
+    private void chooseSaveLocation() {
+        pendingDownloadAction = null;
+        DownloadLocation.pick(this);
+    }
+
+    private void performZipDownload(PageStore.PageItem page) {
+        Toast.makeText(this, "正在打包 ZIP…", Toast.LENGTH_SHORT).show();
         executor.execute(() -> {
             try {
-                String name = Exporter.exportBundle(this, page.directory, page.title);
+                String name = Exporter.exportZip(this, page.directory, page.title,
+                        DownloadLocation.get(this));
                 mainHandler.post(() -> Toast.makeText(this,
-                        "已导出 " + name, Toast.LENGTH_LONG).show());
+                        "ZIP 已下载到 " + name, Toast.LENGTH_LONG).show());
             } catch (Exception error) {
-                mainHandler.post(() -> showError("导出失败", error));
+                mainHandler.post(() -> showError("下载失败", error));
+            }
+        });
+    }
+
+    private void performKindDownload(PageStore.PageItem page, String kind) {
+        executor.execute(() -> {
+            try {
+                String path = Exporter.exportKinds(this, page.directory, page.title,
+                        DownloadLocation.get(this),
+                        java.util.Collections.singleton(kind));
+                mainHandler.post(() -> Toast.makeText(this,
+                        "已下载到 " + path, Toast.LENGTH_LONG).show());
+            } catch (Exception error) {
+                mainHandler.post(() -> showError("下载失败", error));
             }
         });
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                                           int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_LEGACY_STORAGE) {
-            PageStore.PageItem page = pendingExport;
-            pendingExport = null;
-            if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                exportPage(page);
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == DownloadLocation.REQUEST_PICK_TREE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                DownloadLocation.save(this, data.getData());
+                if (saveLocationText != null) {
+                    saveLocationText.setText("保存位置："
+                            + DownloadLocation.displayName(this));
+                }
+                Runnable action = pendingDownloadAction;
+                pendingDownloadAction = null;
+                if (action != null) {
+                    action.run();
+                }
             } else {
-                Toast.makeText(this, "需要存储权限才能导出到 Downloads",
-                        Toast.LENGTH_LONG).show();
+                pendingDownloadAction = null;
+                Toast.makeText(this, "未选择保存位置", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    private void setDownloadButtons(PageStore.PageItem page) {
+        boolean hasPage = page != null;
+        textDownloadButton.setEnabled(hasPage);
+        imageDownloadButton.setEnabled(hasPage && page.images > 0);
+        videoDownloadButton.setEnabled(hasPage && page.videos > 0);
+        audioDownloadButton.setEnabled(hasPage && page.audios > 0);
+        attachmentDownloadButton.setEnabled(hasPage && page.attachments > 0);
+        imageDownloadButton.setText("图片 (" + (hasPage ? page.images : 0) + ")");
+        videoDownloadButton.setText("视频 (" + (hasPage ? page.videos : 0) + ")");
+        audioDownloadButton.setText("音频 (" + (hasPage ? page.audios : 0) + ")");
+        attachmentDownloadButton.setText("附件 (" + (hasPage ? page.attachments : 0) + ")");
     }
 
     private void showError(String title, Exception error) {
@@ -428,6 +533,13 @@ public final class MainActivity extends Activity {
         Button button = actionButton(label, Color.rgb(235, 240, 235), COLOR_GREEN);
         button.setTextSize(13);
         return button;
+    }
+
+    private void addWeightedButton(LinearLayout row, Button button, int leftMargin) {
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(0, dp(44), 1);
+        params.setMargins(dp(leftMargin), 0, 0, 0);
+        row.addView(button, params);
     }
 
     private GradientDrawable rounded(int fill, float radius, int strokeWidth, int strokeColor) {

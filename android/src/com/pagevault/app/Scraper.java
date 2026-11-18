@@ -1,5 +1,8 @@
 package com.pagevault.app;
 
+import android.content.Context;
+
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Attribute;
@@ -118,13 +121,19 @@ public final class Scraper {
     private static final class AssetSlot {
         final String url;
         final String kind;
+        final Map<String, String> headers;
         String localName;
         String mime;
         long bytes;
 
         AssetSlot(String url, String kind) {
+            this(url, kind, null);
+        }
+
+        AssetSlot(String url, String kind, Map<String, String> headers) {
             this.url = url;
             this.kind = kind;
+            this.headers = headers;
         }
     }
 
@@ -151,7 +160,8 @@ public final class Scraper {
         }
     }
 
-    public static PageResult scrape(String input, File pagesRoot, ProgressListener progress)
+    public static PageResult scrape(Context context, String input, File pagesRoot,
+                                    ProgressListener progress)
             throws Exception {
         String pageUrl = normalizeUrl(input);
         if (!pagesRoot.exists() && !pagesRoot.mkdirs()) {
@@ -168,6 +178,13 @@ public final class Scraper {
         }
 
         try {
+            VideoResolver.ResolvedVideo resolved =
+                    VideoResolver.resolve(context, pageUrl, progress);
+            if (resolved != null) {
+                return saveResolvedVideo(
+                        resolved, id, tempDir, finalDir, assetsDir, progress);
+            }
+
             report(progress, 2, "正在读取网页");
             FetchedPage fetched = fetchHtml(pageUrl);
             pageUrl = fetched.url;
@@ -230,16 +247,158 @@ public final class Scraper {
             counts.put("audios", audios);
             counts.put("attachments", attachments);
             manifest.put("assets", counts);
+            JSONArray files = new JSONArray();
+            for (AssetSlot slot : assets.values()) {
+                if (slot.localName != null) {
+                    JSONObject file = new JSONObject();
+                    file.put("kind", slot.kind);
+                    file.put("file", "assets/" + slot.localName);
+                    files.put(file);
+                }
+            }
+            manifest.put("files", files);
             manifest.put("licenseNotice", "仅保存用户有权访问和保存的内容。");
             writeUtf8(new File(tempDir, "manifest.json"), manifest.toString(2));
 
             moveDirectory(tempDir.toPath(), finalDir.toPath());
-            report(progress, 100, "已保存到本地");
+            report(progress, 100, "预览已生成");
             return new PageResult(finalDir, id, title, images, videos, audios, attachments, pageBytes);
         } catch (Exception e) {
             deleteRecursively(tempDir);
             throw e;
         }
+    }
+
+    private static PageResult saveResolvedVideo(
+            VideoResolver.ResolvedVideo resolved,
+            String id,
+            File tempDir,
+            File finalDir,
+            File assetsDir,
+            ProgressListener progress) throws Exception {
+        List<AssetSlot> slots = new ArrayList<>();
+        for (VideoResolver.ResolvedMedia media : resolved.media) {
+            if (slots.size() >= MAX_ASSETS) {
+                break;
+            }
+            slots.add(new AssetSlot(media.url, media.kind, media.headers));
+        }
+        long totalBytes = 0;
+        for (int i = 0; i < slots.size(); i++) {
+            AssetSlot slot = slots.get(i);
+            int percent = 12 + (int) Math.round((i * 72.0) / Math.max(1, slots.size()));
+            report(progress, percent,
+                    "正在保存视频资源 " + (i + 1) + "/" + slots.size());
+            try {
+                totalBytes += downloadAsset(slot, assetsDir, resolved.sourceUrl);
+            } catch (Exception ignored) {
+                slot.localName = null;
+            }
+            if (totalBytes > MAX_TOTAL_BYTES) {
+                throw new IOException("媒体资源已超过 2 GB 限制");
+            }
+        }
+
+        List<AssetSlot> videos = new ArrayList<>();
+        List<AssetSlot> images = new ArrayList<>();
+        LinkedHashMap<String, AssetSlot> assetMap = new LinkedHashMap<>();
+        for (AssetSlot slot : slots) {
+            if (slot.localName == null) {
+                continue;
+            }
+            assetMap.put(slot.url, slot);
+            if ("video".equals(slot.kind)) {
+                videos.add(slot);
+            } else if ("image".equals(slot.kind)) {
+                images.add(slot);
+            }
+        }
+        if (videos.isEmpty() && images.isEmpty()) {
+            throw new IOException(
+                    "已解析到媒体地址，但文件下载失败；链接可能已过期或受到平台风控");
+        }
+        if (resolved.media.stream().anyMatch(media -> "video".equals(media.kind))
+                && videos.isEmpty()) {
+            throw new IOException("视频解析成功，但视频文件下载失败；请检查网络或平台限制");
+        }
+
+        StringBuilder content = new StringBuilder();
+        if (resolved.author != null && !resolved.author.isEmpty()) {
+            content.append("<p><strong>作者：</strong>")
+                    .append(escapeHtml(resolved.author)).append("</p>");
+        }
+        content.append("<p><strong>来源：</strong>")
+                .append(escapeHtml(resolved.platform)).append("</p>");
+        if (resolved.description != null && !resolved.description.isEmpty()) {
+            for (String paragraph : resolved.description.replace("\r\n", "\n").split("\n")) {
+                if (!paragraph.trim().isEmpty()) {
+                    content.append("<p>").append(escapeHtml(paragraph.trim()))
+                            .append("</p>");
+                }
+            }
+        }
+        AssetSlot poster = images.isEmpty() ? null : images.get(0);
+        for (AssetSlot video : videos) {
+            content.append("<video controls preload=\"metadata\" src=\"assets/")
+                    .append(video.localName).append('"');
+            if (poster != null) {
+                content.append(" poster=\"assets/").append(poster.localName).append('"');
+            }
+            content.append("></video>");
+        }
+        for (AssetSlot image : images) {
+            content.append("<figure><img src=\"assets/").append(image.localName)
+                    .append("\" alt=\"视频封面\"></figure>");
+        }
+
+        report(progress, 88, "正在生成视频离线阅读页");
+        String readerHtml = buildReaderHtml(
+                resolved.title, resolved.sourceUrl, Jsoup.parseBodyFragment(
+                        "<article>" + content + "</article>").body(), assetMap);
+        writeUtf8(new File(tempDir, "index.html"), readerHtml);
+        String articleText = resolved.title + "\n\n"
+                + (resolved.author == null ? "" : "作者：" + resolved.author + "\n")
+                + (resolved.description == null ? "" : resolved.description + "\n");
+        writeUtf8(new File(tempDir, "article.txt"), articleText);
+
+        int imageCount = images.size();
+        int videoCount = videos.size();
+        long pageBytes = directorySize(tempDir);
+        JSONObject manifest = new JSONObject();
+        manifest.put("id", id);
+        manifest.put("title", resolved.title);
+        manifest.put("url", resolved.sourceUrl);
+        manifest.put("platform", resolved.platform);
+        manifest.put("author", resolved.author == null ? JSONObject.NULL : resolved.author);
+        manifest.put("capturedAt", new Date().getTime());
+        manifest.put("reader", "index.html");
+        manifest.put("article", "article.txt");
+        manifest.put("bytes", pageBytes);
+        manifest.put("summary", abbreviate(resolved.title + " "
+                + (resolved.description == null ? "" : resolved.description), 220));
+        JSONObject counts = new JSONObject();
+        counts.put("images", imageCount);
+        counts.put("videos", videoCount);
+        counts.put("audios", 0);
+        counts.put("attachments", 0);
+        manifest.put("assets", counts);
+        JSONArray files = new JSONArray();
+        for (AssetSlot slot : slots) {
+            if (slot.localName != null) {
+                JSONObject file = new JSONObject();
+                file.put("kind", slot.kind);
+                file.put("file", "assets/" + slot.localName);
+                files.put(file);
+            }
+        }
+        manifest.put("files", files);
+        manifest.put("licenseNotice", "仅保存用户有权访问和保存的内容。");
+        writeUtf8(new File(tempDir, "manifest.json"), manifest.toString(2));
+
+        moveDirectory(tempDir.toPath(), finalDir.toPath());
+        report(progress, 100, "视频预览已生成");
+        return new PageResult(finalDir, id, resolved.title,
+                imageCount, videoCount, 0, 0, pageBytes);
     }
 
     private static FetchedPage fetchHtml(String pageUrl) throws IOException {
@@ -266,6 +425,12 @@ public final class Scraper {
 
     private static HttpURLConnection openConnection(String url, String referer, String accept)
             throws IOException {
+        return openConnection(url, referer, accept, null);
+    }
+
+    private static HttpURLConnection openConnection(String url, String referer, String accept,
+                                                     Map<String, String> headers)
+            throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
@@ -274,6 +439,15 @@ public final class Scraper {
         connection.setRequestProperty("Accept", accept);
         connection.setRequestProperty("Accept-Encoding", "identity");
         connection.setRequestProperty("Referer", referer);
+        if (headers != null) {
+            for (Map.Entry<String, String> header : headers.entrySet()) {
+                if (header.getKey() != null && header.getValue() != null
+                        && !"Host".equalsIgnoreCase(header.getKey())
+                        && !"Content-Length".equalsIgnoreCase(header.getKey())) {
+                    connection.setRequestProperty(header.getKey(), header.getValue());
+                }
+            }
+        }
         return connection;
     }
 
@@ -386,7 +560,8 @@ public final class Scraper {
         if (slot.url.startsWith("data:")) {
             return saveDataUrl(slot, assetsDir);
         }
-        HttpURLConnection connection = openConnection(slot.url, referer, "*/*");
+        HttpURLConnection connection = openConnection(
+                slot.url, referer, "*/*", slot.headers);
         try {
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {

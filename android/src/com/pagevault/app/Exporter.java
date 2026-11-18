@@ -1,12 +1,12 @@
 package com.pagevault.app;
 
-import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Context;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.MediaStore;
+
+import androidx.documentfile.provider.DocumentFile;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -24,66 +25,138 @@ public final class Exporter {
     private Exporter() {
     }
 
-    public static String exportBundle(Context context, File pageDirectory, String title)
-            throws Exception {
-        String safeTitle = title.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_")
-                .replaceAll("\\s+", " ").trim();
-        if (safeTitle.isEmpty()) {
-            safeTitle = "网页";
+    public static String exportKinds(
+            Context context,
+            File pageDirectory,
+            String title,
+            Uri treeUri,
+            Set<String> kinds) throws Exception {
+        DocumentFile tree = DocumentFile.fromTreeUri(context, treeUri);
+        if (tree == null || !tree.canWrite()) {
+            throw new IllegalStateException("保存位置不可写，请重新选择");
         }
-        if (safeTitle.length() > 42) {
-            safeTitle = safeTitle.substring(0, 42);
+        String folderName = safeName(title) + "_" + timestamp();
+        DocumentFile folder = tree.createDirectory(folderName);
+        if (folder == null) {
+            throw new IllegalStateException("无法在所选位置创建下载目录");
         }
-        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        String displayName = "PageVault_" + safeTitle + "_" + stamp + ".zip";
 
-        File cacheZip = new File(context.getCacheDir(), "export_" + stamp + ".zip");
+        copyIfExists(context, new File(pageDirectory, "manifest.json"),
+                folder, "manifest.json", "application/json");
+        if (kinds.contains("text")) {
+            copyIfExists(context, new File(pageDirectory, "index.html"),
+                    folder, "index.html", "text/html");
+            copyIfExists(context, new File(pageDirectory, "article.txt"),
+                    folder, "article.txt", "text/plain");
+        }
+
+        File manifestFile = new File(pageDirectory, "manifest.json");
+        JSONObject manifest = new JSONObject(readUtf8(manifestFile));
+        JSONArray files = manifest.optJSONArray("files");
+        if (files == null) {
+            throw new IllegalStateException("预览中没有可下载的文件清单");
+        }
+        DocumentFile assets = folder.findFile("assets");
+        if (assets == null) {
+            assets = folder.createDirectory("assets");
+        }
+        if (assets == null) {
+            throw new IllegalStateException("无法创建 assets 目录");
+        }
+        String root = pageDirectory.getCanonicalPath() + File.separator;
+        for (int i = 0; i < files.length(); i++) {
+            JSONObject item = files.optJSONObject(i);
+            if (item == null || !kinds.contains(item.optString("kind"))) {
+                continue;
+            }
+            String relative = item.optString("file");
+            File source = new File(pageDirectory, relative);
+            if (!source.getCanonicalPath().startsWith(root) || !source.isFile()) {
+                continue;
+            }
+            String name = source.getName();
+            DocumentFile destination = assets.createFile(mimeFor(source), name);
+            if (destination == null) {
+                throw new IllegalStateException("无法创建文件：" + name);
+            }
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = context.getContentResolver()
+                         .openOutputStream(destination.getUri())) {
+                if (output == null) {
+                    throw new IllegalStateException("无法写入：" + name);
+                }
+                copy(input, output);
+            }
+        }
+        return tree.getName() + "/" + folderName;
+    }
+
+    public static String exportZip(
+            Context context,
+            File pageDirectory,
+            String title,
+            Uri treeUri) throws Exception {
+        DocumentFile tree = DocumentFile.fromTreeUri(context, treeUri);
+        if (tree == null || !tree.canWrite()) {
+            throw new IllegalStateException("保存位置不可写，请重新选择");
+        }
+        String displayName = "PageVault_" + safeName(title) + "_" + timestamp() + ".zip";
+        File cacheZip = new File(context.getCacheDir(), "export_" + timestamp() + ".zip");
         try {
             zipDirectory(pageDirectory, cacheZip);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                writeToMediaStore(context, cacheZip, displayName);
-            } else {
-                File downloads = new File(
-                        Environment.getExternalStoragePublicDirectory(
-                                Environment.DIRECTORY_DOWNLOADS), "PageVault");
-                if (!downloads.exists() && !downloads.mkdirs()) {
-                    throw new IllegalStateException("无法创建 Downloads/PageVault 目录");
-                }
-                copy(cacheZip, new File(downloads, displayName));
+            DocumentFile target = tree.findFile(displayName);
+            if (target == null) {
+                target = tree.createFile("application/zip", displayName);
             }
-            return displayName;
+            if (target == null) {
+                throw new IllegalStateException("无法创建 ZIP 文件");
+            }
+            try (InputStream input = new FileInputStream(cacheZip);
+                 OutputStream output = context.getContentResolver()
+                         .openOutputStream(target.getUri(), "w")) {
+                if (output == null) {
+                    throw new IllegalStateException("无法写入 ZIP 文件");
+                }
+                copy(input, output);
+            }
+            return tree.getName() + "/" + target.getName();
         } finally {
             //noinspection ResultOfMethodCallIgnored
             cacheZip.delete();
         }
     }
 
-    private static void writeToMediaStore(Context context, File source, String displayName)
-            throws Exception {
-        ContentResolver resolver = context.getContentResolver();
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName);
-        values.put(MediaStore.MediaColumns.MIME_TYPE, "application/zip");
-        values.put(MediaStore.MediaColumns.RELATIVE_PATH,
-                Environment.DIRECTORY_DOWNLOADS + "/PageVault");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+    private static void copyIfExists(
+            Context context,
+            File source,
+            DocumentFile parent,
+            String name,
+            String mime) throws Exception {
+        if (!source.isFile()) {
+            return;
         }
-        Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-        if (uri == null) {
-            throw new IllegalStateException("系统未创建导出文件");
+        DocumentFile target = parent.findFile(name);
+        if (target == null) {
+            target = parent.createFile(mime, name);
+        }
+        if (target == null) {
+            throw new IllegalStateException("无法创建：" + name);
         }
         try (InputStream input = new FileInputStream(source);
-             OutputStream output = resolver.openOutputStream(uri)) {
+             OutputStream output = context.getContentResolver()
+                     .openOutputStream(target.getUri(), "wt")) {
             if (output == null) {
-                throw new IllegalStateException("无法写入导出文件");
+                throw new IllegalStateException("无法写入：" + name);
             }
             copy(input, output);
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContentValues complete = new ContentValues();
-            complete.put(MediaStore.MediaColumns.IS_PENDING, 0);
-            resolver.update(uri, complete, null, null);
+    }
+
+    private static String readUtf8(File file) throws Exception {
+        try (InputStream input = new FileInputStream(file)) {
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            copy(input, output);
+            return output.toString(StandardCharsets.UTF_8.name());
         }
     }
 
@@ -116,18 +189,41 @@ public final class Exporter {
         }
     }
 
-    private static void copy(File source, File target) throws Exception {
-        try (InputStream input = new FileInputStream(source);
-             OutputStream output = new FileOutputStream(target)) {
-            copy(input, output);
-        }
-    }
-
     private static void copy(InputStream input, OutputStream output) throws Exception {
         byte[] buffer = new byte[64 * 1024];
         int read;
         while ((read = input.read(buffer)) != -1) {
             output.write(buffer, 0, read);
         }
+    }
+
+    private static String mimeFor(File file) {
+        String name = file.getName().toLowerCase(Locale.US);
+        if (name.endsWith(".mp4")) return "video/mp4";
+        if (name.endsWith(".webm")) return "video/webm";
+        if (name.endsWith(".mov")) return "video/quicktime";
+        if (name.endsWith(".mp3")) return "audio/mpeg";
+        if (name.endsWith(".m4a")) return "audio/mp4";
+        if (name.endsWith(".wav")) return "audio/wav";
+        if (name.endsWith(".ogg")) return "audio/ogg";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".gif")) return "image/gif";
+        if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".pdf")) return "application/pdf";
+        return "application/octet-stream";
+    }
+
+    private static String safeName(String title) {
+        String safe = title.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_")
+                .replaceAll("\\s+", " ").trim();
+        if (safe.isEmpty()) {
+            safe = "网页";
+        }
+        return safe.length() > 42 ? safe.substring(0, 42) : safe;
+    }
+
+    private static String timestamp() {
+        return new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
     }
 }

@@ -9,11 +9,12 @@ if (-not $Dotnet) {
 }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $PSScriptRoot "PageVault\PageVault.csproj"
+$ytDlp = Join-Path $PSScriptRoot "PageVault\third_party\yt-dlp.exe"
 $buildRoot = Join-Path $projectRoot "build\desktop-publish"
 $distRoot = Join-Path $projectRoot "dist"
 $packageRoot = Join-Path $projectRoot "build\package-win"
-$outputExe = Join-Path $distRoot "PageVault-1.0.0-win-x64.exe"
-$zipPath = Join-Path $distRoot "PageVault-1.0.0-win-x64.zip"
+$outputExe = Join-Path $distRoot "PageVault-1.1.0-win-x64.exe"
+$zipPath = Join-Path $distRoot "PageVault-1.1.0-win-x64.zip"
 
 if (-not (Test-Path -LiteralPath $Dotnet)) {
     throw "Missing .NET SDK: $Dotnet"
@@ -34,6 +35,13 @@ function Reset-ProjectDirectory([string]$Path, [string]$ExpectedPrefix) {
 Reset-ProjectDirectory $buildRoot (Join-Path $projectRoot "build")
 Reset-ProjectDirectory $packageRoot (Join-Path $projectRoot "build")
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
+
+if (-not (Test-Path -LiteralPath $ytDlp)) {
+    & (Join-Path $projectRoot "tools\build-ytdlp.ps1") -OutputPath $ytDlp
+    if ($LASTEXITCODE -ne 0) {
+        throw "Embedded yt-dlp build failed"
+    }
+}
 
 & $Dotnet publish $project `
     -c Release `
@@ -75,7 +83,7 @@ $hashes = @(
 )
 $hashes | ForEach-Object {
     "$($_.Hash.ToLowerInvariant())  $([System.IO.Path]::GetFileName($_.Path))"
-} | Set-Content -LiteralPath (Join-Path $distRoot "PageVault-1.0.0-win-x64.sha256") -Encoding ASCII
+} | Set-Content -LiteralPath (Join-Path $distRoot "PageVault-1.1.0-win-x64.sha256") -Encoding ASCII
 
 $hashes | Format-List Path, Hash
 Write-Host "EXE: $outputExe"

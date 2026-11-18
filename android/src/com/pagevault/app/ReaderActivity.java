@@ -1,10 +1,8 @@
 package com.pagevault.app;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -15,7 +13,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -40,7 +37,6 @@ public final class ReaderActivity extends Activity {
     private static final int COLOR_INK = Color.rgb(36, 49, 45);
     private static final int COLOR_GREEN = Color.rgb(30, 91, 79);
     private static final int COLOR_ACCENT = Color.rgb(232, 116, 59);
-    private static final int REQUEST_LEGACY_STORAGE = 72;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -109,7 +105,7 @@ public final class ReaderActivity extends Activity {
         titleParams.setMargins(dp(4), 0, dp(8), 0);
         toolbar.addView(title, titleParams);
 
-        exportButton = compactButton("导出");
+        exportButton = compactButton("ZIP");
         exportButton.setTextSize(13);
         exportButton.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
         exportButton.setOnClickListener(view -> exportPage());
@@ -176,20 +172,26 @@ public final class ReaderActivity extends Activity {
         if (exportPending || pageDirectory == null) {
             return;
         }
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
-                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
-                    REQUEST_LEGACY_STORAGE);
+        if (DownloadLocation.get(this) == null) {
+            Toast.makeText(this, "请选择保存位置", Toast.LENGTH_SHORT).show();
+            DownloadLocation.pick(this);
+            return;
+        }
+        performExport();
+    }
+
+    private void performExport() {
+        if (exportPending) {
             return;
         }
         exportPending = true;
         exportButton.setEnabled(false);
         exportButton.setAlpha(.55f);
-        Toast.makeText(this, "正在打包到 Downloads/PageVault…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在打包 ZIP…", Toast.LENGTH_SHORT).show();
         executor.execute(() -> {
             try {
-                String name = Exporter.exportBundle(this, pageDirectory, pageTitle);
+                String name = Exporter.exportZip(this, pageDirectory, pageTitle,
+                        DownloadLocation.get(this));
                 mainHandler.post(() -> {
                     exportPending = false;
                     exportButton.setEnabled(true);
@@ -215,31 +217,20 @@ public final class ReaderActivity extends Activity {
     private void showExportSuccess(String name) {
         new AlertDialog.Builder(this)
                 .setTitle("导出完成")
-                .setMessage(name + "\n\n已保存到 Downloads/PageVault。")
-                .setNegativeButton("关闭", null)
-                .setPositiveButton("打开下载目录", (dialog, which) -> {
-                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    try {
-                        startActivity(new Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS));
-                    } catch (Exception ignored) {
-                        startActivity(intent);
-                    }
-                })
+                .setMessage(name + "\n\n已保存到你选择的位置。")
+                .setPositiveButton("知道了", null)
                 .show();
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                                           int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_LEGACY_STORAGE) {
-            if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                exportPage();
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == DownloadLocation.REQUEST_PICK_TREE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                DownloadLocation.save(this, data.getData());
+                performExport();
             } else {
-                Toast.makeText(this, "需要存储权限才能导出到 Downloads",
-                        Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "未选择保存位置", Toast.LENGTH_SHORT).show();
             }
         }
     }
